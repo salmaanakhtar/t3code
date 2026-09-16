@@ -29,6 +29,8 @@ export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
+  /** Where a popout window of each panel kind was last placed, keyed by kind. */
+  readonly popoutWindowBounds: Record<string, DesktopPopoutWindowBounds>;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -78,6 +80,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
+  popoutWindowBounds: {},
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -87,6 +90,32 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   wslDistro: null,
   wslOnly: false,
 };
+
+/** Size floor shared with the window creation path in `PopoutWindows`. */
+export const MIN_POPOUT_WINDOW_SIZE = {
+  width: 320,
+  height: 240,
+} as const;
+
+/**
+ * Placement of a popped-out panel, remembered per panel kind rather than per
+ * surface: the same panel type reopens where the user last put it, including on
+ * another monitor.
+ */
+export const DesktopPopoutWindowBoundsSchema = Schema.Struct({
+  x: Schema.Int,
+  y: Schema.Int,
+  width: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_POPOUT_WINDOW_SIZE.width)),
+  height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_POPOUT_WINDOW_SIZE.height)),
+});
+export type DesktopPopoutWindowBounds = typeof DesktopPopoutWindowBoundsSchema.Type;
+
+const DesktopPopoutWindowBoundsDocument = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+});
 
 const DesktopWindowBoundsDocument = Schema.Struct({
   x: Schema.Number,
@@ -100,6 +129,9 @@ const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  popoutWindowBounds: Schema.optionalKey(
+    Schema.Record(Schema.String, DesktopPopoutWindowBoundsDocument),
+  ),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -121,6 +153,7 @@ const DesktopSettingsJson = fromLenientJson(DesktopSettingsDocument);
 const decodeDesktopSettingsJson = Schema.decodeEffect(DesktopSettingsJson);
 const encodeDesktopSettingsJson = Schema.encodeEffect(DesktopSettingsJson);
 const decodeDesktopWindowBounds = Schema.decodeUnknownOption(DesktopWindowBoundsSchema);
+const decodeDesktopPopoutWindowBounds = Schema.decodeUnknownOption(DesktopPopoutWindowBoundsSchema);
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(DesktopWindowBoundsSchema);
 
 const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSettingsChange => ({
@@ -161,6 +194,10 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setPopoutWindowBounds: (
+      kind: string,
+      bounds: DesktopPopoutWindowBounds,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -210,6 +247,26 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
+export function normalizePopoutWindowBounds(value: unknown): DesktopPopoutWindowBounds | null {
+  return Option.getOrNull(decodeDesktopPopoutWindowBounds(value));
+}
+
+/**
+ * Keeps the entries this build can still honour and drops the rest — a display
+ * that shrank, or a hand-edited file — instead of failing the whole load.
+ */
+export function normalizePopoutWindowBoundsMap(
+  value: unknown,
+): Record<string, DesktopPopoutWindowBounds> {
+  if (typeof value !== "object" || value === null) return {};
+  const bounds: Record<string, DesktopPopoutWindowBounds> = {};
+  for (const [kind, entry] of Object.entries(value)) {
+    const normalized = normalizePopoutWindowBounds(entry);
+    if (normalized !== null) bounds[kind] = normalized;
+  }
+  return bounds;
+}
+
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
@@ -234,6 +291,7 @@ function normalizeDesktopSettingsDocument(
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
+    popoutWindowBounds: normalizePopoutWindowBoundsMap(parsed.popoutWindowBounds),
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -266,6 +324,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
+  }
+  if (Object.keys(settings.popoutWindowBounds).length > 0) {
+    document.popoutWindowBounds = settings.popoutWindowBounds;
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
@@ -321,6 +382,27 @@ function setMainWindowBounds(
         mainWindowBounds: bounds,
         mainWindowMaximized: isMaximized,
       };
+}
+
+function setPopoutWindowBounds(
+  settings: DesktopSettings,
+  kind: string,
+  bounds: DesktopPopoutWindowBounds,
+): DesktopSettings {
+  const current = settings.popoutWindowBounds[kind];
+  if (
+    current !== undefined &&
+    current.x === bounds.x &&
+    current.y === bounds.y &&
+    current.width === bounds.width &&
+    current.height === bounds.height
+  ) {
+    return settings;
+  }
+  return {
+    ...settings,
+    popoutWindowBounds: { ...settings.popoutWindowBounds, [kind]: bounds },
+  };
 }
 
 function setTailscaleServe(
@@ -536,6 +618,18 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    setPopoutWindowBounds: (kind, bounds) =>
+      persist((settings) => setPopoutWindowBounds(settings, kind, bounds)).pipe(
+        Effect.withSpan("desktop.settings.setPopoutWindowBounds", {
+          attributes: {
+            kind,
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+          },
+        }),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -599,6 +693,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        setPopoutWindowBounds: (kind, bounds) =>
+          update((settings) => setPopoutWindowBounds(settings, kind, bounds)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

@@ -1211,6 +1211,31 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+/**
+ * A panel the client asked to move into its own OS window.
+ *
+ * `key` is the client's stable identity for the popped-out panel (a right-panel
+ * surface id). `url` is the already-routed app URL the new window loads — the
+ * renderer owns routing, so main never builds it. `kind` names the panel type so
+ * placement can be remembered per panel type, not only per surface instance.
+ */
+export const DesktopPopoutWindowInputSchema = Schema.Struct({
+  key: Schema.String,
+  kind: Schema.String,
+  title: Schema.String,
+  url: Schema.String,
+});
+export type DesktopPopoutWindowInput = typeof DesktopPopoutWindowInputSchema.Type;
+
+export const DesktopPopoutWindowCloseInputSchema = Schema.Struct({
+  key: Schema.String,
+});
+export type DesktopPopoutWindowCloseInput = typeof DesktopPopoutWindowCloseInputSchema.Type;
+
+/** Keys of the popout windows currently open, pushed whenever the set changes. */
+export const DesktopPopoutWindowKeysSchema = Schema.Array(Schema.String);
+export type DesktopPopoutWindowKeys = typeof DesktopPopoutWindowKeysSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
@@ -1342,6 +1367,25 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
+  /**
+   * Desktop-only ability to move a right-panel surface into a window of its
+   * own. Present iff the renderer is hosted by the Electron desktop build.
+   */
+  popout?: DesktopPopoutBridge;
+}
+
+/**
+ * A panel moved into its own OS window. Main owns the window — its size,
+ * position and display — while the renderer owns what the window renders, so
+ * `open` carries the app URL the renderer already routes for that panel.
+ */
+export interface DesktopPopoutBridge {
+  open: (input: DesktopPopoutWindowInput) => Promise<void>;
+  close: (key: string) => Promise<void>;
+  /** Keys of the popout windows open right now, for a renderer that just booted. */
+  list: () => Promise<readonly string[]>;
+  /** Fires with the full key set whenever a popout window opens or closes. */
+  onWindowsChange: (listener: (keys: readonly string[]) => void) => () => void;
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */

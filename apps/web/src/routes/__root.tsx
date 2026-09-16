@@ -17,6 +17,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { isPopoutWindow } from "../popoutWindow";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -190,6 +191,27 @@ function RootRouteView() {
         <DocumentTitleSync />
         <Outlet />
       </>
+    );
+  }
+
+  // A panel moved into its own window: the app shell, and every app-level
+  // coordinator, belongs to the main window only. Rendering them here would run
+  // snap-shot shortcuts, notifications and app activation twice per app.
+  if (isPopoutWindow()) {
+    return (
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <ContrastAppearanceSync />
+          <EnvironmentThemeSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          <CustomSnoozeDialogHost />
+          <div data-popout-window="true" className="contents">
+            <Outlet />
+          </div>
+        </AnchoredToastProvider>
+      </ToastProvider>
     );
   }
 

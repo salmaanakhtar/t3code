@@ -2,6 +2,12 @@
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
+/* A panel moved into its own window keeps the panel, not the workspace: the
+   thread header belongs to the full app. */
+[data-popout-window="true"] [data-chat-header] {
+  display: none;
+}
+
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 

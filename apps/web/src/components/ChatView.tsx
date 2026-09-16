@@ -215,6 +215,15 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
+import {
+  closePanelPopout,
+  decodePopoutSurface,
+  getOpenPopoutKeys,
+  openPanelPopout,
+  useOpenPopoutKeys,
+  usePopoutRequest,
+} from "../popoutWindow";
+
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -1745,7 +1754,12 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  // A popout window renders one panel, alone: it carries that panel in its
+  // URL and never shows the chat column or the panel sheet.
+  const popoutRequest = usePopoutRequest();
+  const openPopoutKeys = useOpenPopoutKeys();
+  const shouldUseRightPanelSheet =
+    useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY) && popoutRequest === null;
   const isMobileViewport = useMediaQuery("max-sm");
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -2076,15 +2090,29 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
-    canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+    popoutRequest !== null ||
+    (canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey);
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
+  // A popout rebuilds the surface it was handed before anything renders it.
   useEffect(() => {
-    if (!activeThreadRef) return;
-    useRightPanelStore
-      .getState()
-      .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
-  }, [activePreviewState.sessions, activeThreadRef]);
+    if (!activeThreadRef || popoutRequest === null) return;
+    const surface = decodePopoutSurface(popoutRequest.encodedSurface);
+    if (surface === null) return;
+    useRightPanelStore.getState().restoreSurface(activeThreadRef, surface);
+  }, [activeThreadRef, popoutRequest]);
+
+  useEffect(() => {
+    // A popout renders the panel it owns and nothing else from this list.
+    if (!activeThreadRef || popoutRequest !== null) return;
+    // Panels living in a popout window keep their tab alive there, so this
+    // window must not recreate their surfaces: two renderers on one preview
+    // tab means two guests fighting over the same registration.
+    const tabIds = Object.keys(activePreviewState.sessions).filter(
+      (tabId) => !openPopoutKeys.has(`browser:${tabId}`),
+    );
+    useRightPanelStore.getState().reconcileBrowserSurfaces(activeThreadRef, tabIds);
+  }, [activePreviewState.sessions, activeThreadRef, popoutRequest, openPopoutKeys]);
 
   useEffect(() => {
     if (!activeThreadRef || activePreviewMiniPlayer?.source.kind !== "browser") return;
@@ -5099,6 +5127,26 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
   );
+  // Moves a panel out of this window and into one of its own, or back in when
+  // that window goes away — see popoutWindow for the round trip.
+  const togglePanelPopOut = useCallback(
+    (surface: RightPanelSurface, title: string) => {
+      if (!activeThreadRef) return;
+      const ref = activeThreadRef;
+      const action = getOpenPopoutKeys().has(surface.id)
+        ? closePanelPopout(surface.id)
+        : openPanelPopout({ ref, surface, title });
+      void action.catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to move this panel",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      });
+    },
+    [activeThreadRef],
+  );
+
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
@@ -10298,6 +10346,7 @@ export default function ChatView(props: ChatViewProps) {
 
       {rightPanelPresent && !shouldUseRightPanelSheet && activeThreadRef ? (
         <RightPanelTabs
+          onTogglePopOut={togglePanelPopOut}
           mode="inline"
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
           open={rightPanelOpen}

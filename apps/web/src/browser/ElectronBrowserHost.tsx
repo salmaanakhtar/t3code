@@ -7,6 +7,7 @@ import { useEffect, useMemo } from "react";
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
+import { useOpenPopoutKeys, usePopoutRequest } from "~/popoutWindow";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
@@ -79,10 +80,25 @@ export function ElectronBrowserHost() {
     });
   }, []);
 
+  const popoutRequest = usePopoutRequest();
+  const openPopoutKeys = useOpenPopoutKeys();
+  // One guest per preview tab, in exactly one window: a tab whose panel lives
+  // in a popout window is embedded there, and skipped here.
+  const hostedSessions = useMemo(
+    () =>
+      sessions.filter((session) => {
+        const surfaceId = `browser:${session.snapshot.tabId}`;
+        return popoutRequest === null
+          ? !openPopoutKeys.has(surfaceId)
+          : popoutRequest.key === surfaceId;
+      }),
+    [sessions, openPopoutKeys, popoutRequest],
+  );
+
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
+      {hostedSessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
         const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
         return (
           <HostedBrowserWebview

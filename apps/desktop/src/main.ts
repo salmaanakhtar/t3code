@@ -64,6 +64,7 @@ import * as LinuxBrowserSecret from "./preview/BrowserImport/LinuxBrowserSecret.
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as PopoutWindows from "./window/PopoutWindows.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
@@ -152,9 +153,17 @@ const desktopPreviewLayer = PreviewManager.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
+// Popouts host the app's own renderer and may embed preview guests, so they
+// sit between the window and preview layers.
+const desktopPopoutLayer = PopoutWindows.layer.pipe(
+  Layer.provideMerge(desktopFoundationLayer),
+  Layer.provideMerge(desktopPreviewLayer),
+);
+
 const desktopWindowLayer = DesktopWindow.layer.pipe(
   Layer.provideMerge(desktopServerExposureLayer),
   Layer.provideMerge(desktopPreviewLayer),
+  Layer.provideMerge(desktopPopoutLayer),
 );
 
 const desktopSnapShotLayer = DesktopSnapShot.layer.pipe(
