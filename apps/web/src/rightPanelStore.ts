@@ -18,6 +18,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { isPopoutRenderer } from "./popoutParams";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -157,6 +158,11 @@ interface RightPanelStoreState {
   activateTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   closeTerminal: (ref: ScopedThreadRef, surfaceId: string, terminalId: string) => void;
   activateSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
+  /**
+   * Put a surface handed over by another window back into this window's
+   * panel state — a popout's payload, or a panel whose window just closed.
+   */
+  restoreSurface: (ref: ScopedThreadRef, surface: RightPanelSurface) => void;
   closeSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
@@ -705,6 +711,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : current,
           ),
         ),
+      restoreSurface: (ref, surface) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => upsertSurface(current, surface)),
+        ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -863,7 +873,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         }),
     }),
     {
-      name: RIGHT_PANEL_STORAGE_KEY,
+      // A popout window is a second renderer on the same origin. Sharing the
+      // storage key would let its single-surface state overwrite the workspace
+      // state the main window persists, so it gets its own.
+      name: isPopoutRenderer() ? `${RIGHT_PANEL_STORAGE_KEY}:popout` : RIGHT_PANEL_STORAGE_KEY,
       version: RIGHT_PANEL_STORAGE_VERSION,
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),

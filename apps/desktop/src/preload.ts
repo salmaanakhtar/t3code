@@ -257,6 +257,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  popout: {
+    open: (input) => ipcRenderer.invoke(IpcChannels.POPOUT_WINDOW_OPEN_CHANNEL, input),
+    close: (key) => ipcRenderer.invoke(IpcChannels.POPOUT_WINDOW_CLOSE_CHANNEL, { key }),
+    list: () => ipcRenderer.invoke(IpcChannels.POPOUT_WINDOW_LIST_CHANNEL),
+    onWindowsChange: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, keys: unknown) => {
+        if (!Array.isArray(keys)) return;
+        listener(keys.filter((key): key is string => typeof key === "string"));
+      };
+      ipcRenderer.on(IpcChannels.POPOUT_WINDOW_KEYS_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.POPOUT_WINDOW_KEYS_CHANNEL, wrappedListener);
+      };
+    },
+  },
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

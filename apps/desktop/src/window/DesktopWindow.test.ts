@@ -54,6 +54,7 @@ import {
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PopoutWindows from "./PopoutWindows.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -250,6 +251,19 @@ function makeTestLayer(input: {
         }
         return { settings: desktopSettings, changed };
       }),
+    setPopoutWindowBounds: (kind, bounds) =>
+      Effect.sync(() => {
+        const changed =
+          JSON.stringify(desktopSettings.popoutWindowBounds[kind] ?? null) !==
+          JSON.stringify(bounds);
+        if (changed) {
+          desktopSettings = {
+            ...desktopSettings,
+            popoutWindowBounds: { ...desktopSettings.popoutWindowBounds, [kind]: bounds },
+          };
+        }
+        return { settings: desktopSettings, changed };
+      }),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
@@ -310,6 +324,9 @@ function makeTestLayer(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
+        Layer.mock(PopoutWindows.PopoutWindows)({
+          closeAll: Effect.void,
+        }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: () => Effect.void,
@@ -412,6 +429,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           electronThemeLayer,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
+          Layer.mock(PopoutWindows.PopoutWindows)({
+            closeAll: Effect.void,
+          }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,

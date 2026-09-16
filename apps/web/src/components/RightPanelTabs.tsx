@@ -23,6 +23,8 @@ import {
   Files,
   Globe2,
   Plus,
+  PanelRightIcon,
+  PictureInPicture2,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -40,6 +42,7 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
+import { useOpenPopoutKeys } from "~/popoutWindow";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
@@ -87,6 +90,11 @@ interface RightPanelTabsProps {
   /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
   defaultWidth?: number;
   layoutControls?: ReactNode;
+  /**
+   * Moves the active panel into a window of its own, or back out of one. Absent
+   * on surfaces that cannot be moved (there is nowhere to put them).
+   */
+  onTogglePopOut?: (surface: RightPanelSurface, title: string) => void;
   surfaces: readonly RightPanelSurface[];
   /** Fallback environment for surfaces that do not carry their own. */
   environmentId: EnvironmentId | null;
@@ -836,6 +844,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollRight: false,
   });
 
+  const openPopoutKeys = useOpenPopoutKeys();
+  const activeSurface =
+    props.surfaces.find((surface) => surface.id === props.activeSurfaceId) ?? null;
+  const activeSurfaceIsPoppedOut = activeSurface !== null && openPopoutKeys.has(activeSurface.id);
+
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
     if (!viewport) return;
@@ -1382,6 +1395,41 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               <TooltipPopup>Scroll tabs right</TooltipPopup>
             </Tooltip>
           </div>
+        ) : null}
+        {activeSurface !== null && props.onTogglePopOut ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="inline-flex">
+                  <Button
+                    aria-label={
+                      activeSurfaceIsPoppedOut
+                        ? "Move panel back into this window"
+                        : "Open panel in a new window"
+                    }
+                    data-panel-popout-toggle
+                    onClick={() =>
+                      props.onTogglePopOut?.(
+                        activeSurface,
+                        surfaceTitle(
+                          activeSurface,
+                          props.previewSessions,
+                          props.terminalLabelsById,
+                        ),
+                      )
+                    }
+                    size="icon-xs"
+                    variant="ghost"
+                  >
+                    {activeSurfaceIsPoppedOut ? <PanelRightIcon /> : <PictureInPicture2 />}
+                  </Button>
+                </span>
+              }
+            />
+            <TooltipPopup>
+              {activeSurfaceIsPoppedOut ? "Move back into window" : "Open in new window"}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {props.layoutControls}
         {ownsDesktopTitleBar ? (

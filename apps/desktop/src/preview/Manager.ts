@@ -647,6 +647,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
+  // Windows other than the main one that may embed preview guests (popout
+  // windows). The main window stays separate because frame-capture throttling
+  // and teardown key off it.
+  const hostWindowWebContentsIdsRef = yield* Ref.make<ReadonlySet<number>>(new Set());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
@@ -2104,6 +2108,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ).pipe(Effect.uninterruptible);
   });
 
+  const windowWebContentsId = (window: BrowserWindow): number | null => {
+    try {
+      return window.isDestroyed() ? null : window.webContents.id;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Windows other than the main one that may embed preview guests. A popout
+   * window that owns a panel's surface embeds that panel's guest itself, so its
+   * guest has to be accepted here or the tab never attaches.
+   *
+   * Removing a window that has already been destroyed is a no-op: renderers
+   * that close themselves call this after the fact, and a stale id is harmless
+   * because webContents ids are never reused.
+   */
+  const addHostWindow = Effect.fn("PreviewManager.addHostWindow")(function* (
+    window: BrowserWindow,
+  ) {
+    const webContentsId = windowWebContentsId(window);
+    if (webContentsId === null) return;
+    yield* Ref.update(hostWindowWebContentsIdsRef, (ids) =>
+      ids.has(webContentsId) ? ids : new Set([...ids, webContentsId]),
+    );
+  });
+
+  const removeHostWindow = Effect.fn("PreviewManager.removeHostWindow")(function* (
+    window: BrowserWindow,
+  ) {
+    const webContentsId = windowWebContentsId(window);
+    if (webContentsId === null) return;
+    yield* Ref.update(hostWindowWebContentsIdsRef, (ids) => {
+      if (!ids.has(webContentsId)) return ids;
+      const next = new Set(ids);
+      next.delete(webContentsId);
+      return next;
+    });
+  });
+
   const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
     tabId: string,
     defaults?: DesktopPreviewTabDefaults,
@@ -2238,12 +2282,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const wc = webContents.fromId(webContentsId);
     const mainWindow = yield* Ref.get(mainWindowRef);
-    if (
-      !wc ||
-      wc.isDestroyed() ||
-      wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
-    ) {
+    // A guest may be embedded by the main window, or by a popout window that
+    // owns the panel rendering it. Any other host is not ours to drive.
+    const hostWebContents = wc && !wc.isDestroyed() ? wc.hostWebContents : null;
+    const hostWindowWebContentsIds = yield* Ref.get(hostWindowWebContentsIdsRef);
+    const isKnownHost =
+      Option.isNone(mainWindow) ||
+      (hostWebContents !== null &&
+        (hostWebContents === mainWindow.value.webContents ||
+          (typeof hostWebContents.id === "number" &&
+            hostWindowWebContentsIds.has(hostWebContents.id))));
+    if (!wc || wc.isDestroyed() || wc.getType() !== "webview" || !isKnownHost) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
     const attached = yield* Ref.get(attachedRef);
@@ -4641,6 +4690,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAudioMuted,
     setColorScheme,
     setMainWindow,
+    addHostWindow,
+    removeHostWindow,
     startRecording,
     closePictureInPicture,
     stopRecording,
@@ -4952,6 +5003,12 @@ export class PreviewManager extends Context.Service<
   PreviewManager,
   {
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
+    /**
+     * Register a window other than the main one that may embed preview guests
+     * (a popout that owns a panel's surface), so its guest is accepted.
+     */
+    readonly addHostWindow: (window: BrowserWindow) => Effect.Effect<void>;
+    readonly removeHostWindow: (window: BrowserWindow) => Effect.Effect<void>;
     readonly getBrowserSession: (
       scope?: string,
       persistent?: boolean,
@@ -5076,6 +5133,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   return PreviewManager.of({
     setMainWindow: operations.setMainWindow,
+    addHostWindow: operations.addHostWindow,
+    removeHostWindow: operations.removeHostWindow,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
       function* (scope, persistent, namespace) {
         return yield* browserSession

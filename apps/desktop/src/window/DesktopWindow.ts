@@ -28,6 +28,7 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as PopoutWindows from "./PopoutWindows.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -83,7 +84,8 @@ type DesktopWindowRuntimeServices =
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
   | ElectronWindow.ElectronWindow
-  | PreviewManager.PreviewManager;
+  | PreviewManager.PreviewManager
+  | PopoutWindows.PopoutWindows;
 
 export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError
@@ -318,6 +320,7 @@ export const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
+  const popoutWindows = yield* PopoutWindows.PopoutWindows;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -832,7 +835,11 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
-      void runPromise(electronWindow.clearMain(Option.some(window)));
+      // Popouts are satellite windows of the main one, the way the preview
+      // picture-in-picture window is: none of them outlive it.
+      void runPromise(
+        Effect.andThen(popoutWindows.closeAll, electronWindow.clearMain(Option.some(window))),
+      );
     });
 
     return window;

@@ -115,3 +115,8 @@ export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";
 
 export const PREVIEW_RECORDING_INPUT_CHANNEL = "desktop:preview-recording-input";
+
+export const POPOUT_WINDOW_OPEN_CHANNEL = "desktop:popout-window-open";
+export const POPOUT_WINDOW_CLOSE_CHANNEL = "desktop:popout-window-close";
+export const POPOUT_WINDOW_KEYS_CHANNEL = "desktop:popout-window-keys";
+export const POPOUT_WINDOW_LIST_CHANNEL = "desktop:popout-window-list";
